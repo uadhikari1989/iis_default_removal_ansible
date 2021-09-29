@@ -1,0 +1,84 @@
+---
+- name: Windows Tasks
+  hosts: win
+  tasks:
+    - name:  Get the Default website path
+      win_shell: |
+        Import-Module WebAdministration
+        (Get-Item 'iis:\sites\Default Web Site').physicalpath 
+      register: shellout
+
+    - set_fact: 
+        docroot: "{{ shellout.stdout | trim | regex_replace('%SystemDrive%', ansible_env.SystemDrive) }}"
+
+    - debug: var=docroot
+
+    - name:  Get the files inside the docroot
+      win_shell: |
+        Get-ChildItem {{docroot }} -File|Select-String "IIS Windows Server"|findstr "IIS Windows Server"
+      register: listoffiles
+
+    - set_fact: 
+        filename: "{{listoffiles.stdout | trim | regex_replace(':[0-9]+:<title>IIS Windows Server</title>') }}"
+
+    - name: Print info on the file
+      vars:
+        msg: |
+          ------------------------------------
+          Identified the HTML/ASP file containing the Text
+          ------------------------------------
+          docroot : {{docroot}}
+          filename: {{filename}}
+          ------------------------------------
+      debug:
+        msg: "{{ msg.split('\n') }}"
+
+    - name: Hitting the Local URL
+      win_uri:
+        return_content: true
+        url: http://localhost
+        method: GET
+      register: httpoutputbefore
+
+    - name: Before removing/renaming the file site output
+      vars:
+        msg: |
+          -----------------------------------------------
+          AFTER: HTML Response from http://localhost 
+          -----------------------------------------------
+          {{httpoutputbefore.content}}
+          -----------------------------------------------
+      debug:
+        msg: "{{ msg.split('\n') }}"
+
+      
+    - name: Renaming the file
+      win_shell: |
+         Rename-Item -Path {{filename}} -NewName {{filename}}-bkp
+      register: renameout
+
+    - name: Remove a file only when the tag is called otherwise not
+      tags: never,remove
+      win_file:
+        path: "{{filename}}"
+        state: absent
+
+    - name: Hitting the Local URL
+      win_uri:
+        return_content: true
+        url: http://localhost
+        method: GET
+      register: httpoutputafter
+      ignore_errors: True
+    
+    - name: After removing/renaming the file site output
+      vars:
+        msg: |
+          -----------------------------------------------
+          AFTER: HTML Response from http://localhost 
+          -----------------------------------------------
+          {{httpoutputafter.content}}
+          -----------------------------------------------
+      debug:
+        msg: "{{ msg.split('\n') }}"
+      when: "{{ httpoutputafter.changed }}"
